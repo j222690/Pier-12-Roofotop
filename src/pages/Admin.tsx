@@ -445,9 +445,8 @@ const ReservasTab = ({ reservations, onRefresh }: { reservations: Reservation[];
                         {r.status === "confirmed"
                            ? <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); updateStatus(r.id, "cancelled"); }} className="text-destructive text-xs">Cancelar</Button>
                                : <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); updateStatus(r.id, "confirmed"); }} className="text-primary text-xs">Confirmar</Button>}
-                                 <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); deleteReservation(r.id, r.reservation_name); }} className="text-destructive text-xs"><Trash2 size={14} /></Button>
 {expandedId === r.id ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
-                      </div>
+                     </div>
                     </td>
                   </tr>
                   {expandedId === r.id && (
