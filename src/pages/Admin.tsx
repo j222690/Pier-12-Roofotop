@@ -393,6 +393,13 @@ const ReservasTab = ({ reservations, onRefresh }: { reservations: Reservation[];
     onRefresh();
   };
 
+  const deleteReservation = async (id: string, name: string) => {
+  if (!window.confirm(`Excluir reserva de "${name}"? Esta ação não pode ser desfeita.`)) return;
+  await supabase.from("reservations").delete().eq("id", id);
+  toast.success("Reserva excluída");
+  onRefresh();
+};
+
   return (
     <>
       {showNovaReserva && (
@@ -436,9 +443,10 @@ const ReservasTab = ({ reservations, onRefresh }: { reservations: Reservation[];
                     <td className="p-4">
                       <div className="flex gap-1 items-center">
                         {r.status === "confirmed"
-                          ? <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); updateStatus(r.id, "cancelled"); }} className="text-destructive text-xs">Cancelar</Button>
-                          : <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); updateStatus(r.id, "confirmed"); }} className="text-primary text-xs">Confirmar</Button>}
-                        {expandedId === r.id ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
+                           ? <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); updateStatus(r.id, "cancelled"); }} className="text-destructive text-xs">Cancelar</Button>
+                               : <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); updateStatus(r.id, "confirmed"); }} className="text-primary text-xs">Confirmar</Button>}
+                                 <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); deleteReservation(r.id, r.reservation_name); }} className="text-destructive text-xs"><Trash2 size={14} /></Button>
+{expandedId === r.id ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
                       </div>
                     </td>
                   </tr>
