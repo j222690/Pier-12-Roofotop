@@ -111,6 +111,15 @@ const AdminDashboard = ({ onLogout, role }: { onLogout: () => void; role: AdminR
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+
+    // Excluir automaticamente reservas confirmadas com data anterior a hoje
+    const todayStr = format(new Date(), "yyyy-MM-dd");
+    await supabase
+      .from("reservations")
+      .delete()
+      .eq("status", "confirmed")
+      .lt("reservation_date", todayStr);
+
     const [resRes, evtRes] = await Promise.all([
       supabase.from("reservations").select("*").order("reservation_date", { ascending: false }),
       supabase.from("custom_events").select("*").order("day_of_week"),
@@ -236,10 +245,151 @@ const AdminDashboard = ({ onLogout, role }: { onLogout: () => void; role: AdminR
   );
 };
 
+// ─── Nova Reserva Manual ──────────────────────────────────────────────────────
+const NovaReservaModal = ({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) => {
+  const { settings } = useBusinessSettings();
+  const [form, setForm] = useState({
+    reservation_name: "",
+    reservation_date: format(new Date(), "yyyy-MM-dd"),
+    reservation_time: "19:00",
+    male_count: 0,
+    female_count: 0,
+    phone: "",
+    notes: "",
+    open_wine_opt_in: false,
+  });
+  const [saving, setSaving] = useState(false);
+
+  const guestCount = form.male_count + form.female_count;
+
+  const calcTotal = () => {
+    const dow = new Date(form.reservation_date + "T12:00:00").getDay();
+    const prices = settings.dailyPrices?.[dow] ?? settings.prices;
+    if (form.open_wine_opt_in) return guestCount * settings.openWinePrice;
+    return form.male_count * prices.male + form.female_count * prices.female;
+  };
+
+  const total = calcTotal();
+
+  const save = async () => {
+    if (!form.reservation_name.trim()) { toast.error("Informe o nome do responsável"); return; }
+    if (guestCount === 0) { toast.error("Adicione ao menos 1 pessoa"); return; }
+    setSaving(true);
+    const { error } = await supabase.from("reservations").insert({
+      reservation_name: form.reservation_name.trim(),
+      reservation_date: form.reservation_date,
+      reservation_time: form.reservation_time,
+      guest_count: guestCount,
+      guests: [],
+      total_price: total,
+      phone: form.phone || null,
+      notes: form.notes || null,
+      open_wine_opt_in: form.open_wine_opt_in,
+      status: "confirmed",
+    });
+    setSaving(false);
+    if (error) { toast.error("Erro ao salvar: " + error.message); return; }
+    toast.success("Reserva criada com sucesso! ✓");
+    onSaved();
+    onClose();
+  };
+
+  const dow = new Date(form.reservation_date + "T12:00:00").getDay();
+  const prices = settings.dailyPrices?.[dow] ?? settings.prices;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <motion.div
+        initial={{ opacity: 0, y: 40 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="w-full sm:max-w-lg bg-card border border-border rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl max-h-[95vh] flex flex-col"
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <h2 className="font-heading text-base text-foreground">Nova Reserva Manual</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors"><XIcon size={20} /></button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 p-5 space-y-4">
+          <div>
+            <label className="font-body text-xs text-muted-foreground mb-1 block">Nome do Responsável *</label>
+            <Input value={form.reservation_name} onChange={(e) => setForm({ ...form, reservation_name: e.target.value })} placeholder="Ex: João Silva" className="h-10 bg-secondary border-border font-body" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="font-body text-xs text-muted-foreground mb-1 block">Data *</label>
+              <input type="date" value={form.reservation_date} onChange={(e) => setForm({ ...form, reservation_date: e.target.value })} className="w-full h-10 rounded-md bg-secondary border border-border px-3 font-body text-sm text-foreground" />
+            </div>
+            <div>
+              <label className="font-body text-xs text-muted-foreground mb-1 block">Horário *</label>
+              <input type="time" value={form.reservation_time} onChange={(e) => setForm({ ...form, reservation_time: e.target.value })} className="w-full h-10 rounded-md bg-secondary border border-border px-3 font-body text-sm text-foreground" />
+            </div>
+          </div>
+
+          <div>
+            <label className="font-body text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Convidados</label>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-secondary rounded-lg p-3">
+                <p className="font-body text-xs text-muted-foreground mb-2">Homens <span className="text-primary">({formatCurrency(prices.male)}/pessoa)</span></p>
+                <div className="flex items-center gap-3">
+                  <button type="button" onClick={() => setForm({ ...form, male_count: Math.max(0, form.male_count - 1) })} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center font-bold hover:bg-primary/20 transition-colors">−</button>
+                  <span className="font-heading text-xl text-foreground w-8 text-center">{form.male_count}</span>
+                  <button type="button" onClick={() => setForm({ ...form, male_count: form.male_count + 1 })} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center font-bold hover:bg-primary/20 transition-colors">+</button>
+                </div>
+              </div>
+              <div className="bg-secondary rounded-lg p-3">
+                <p className="font-body text-xs text-muted-foreground mb-2">Mulheres <span className="text-primary">({formatCurrency(prices.female)}/pessoa)</span></p>
+                <div className="flex items-center gap-3">
+                  <button type="button" onClick={() => setForm({ ...form, female_count: Math.max(0, form.female_count - 1) })} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center font-bold hover:bg-primary/20 transition-colors">−</button>
+                  <span className="font-heading text-xl text-foreground w-8 text-center">{form.female_count}</span>
+                  <button type="button" onClick={() => setForm({ ...form, female_count: form.female_count + 1 })} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center font-bold hover:bg-primary/20 transition-colors">+</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label className="font-body text-xs text-muted-foreground mb-1 block">Telefone</label>
+            <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="(49) 99999-9999" type="tel" className="h-10 bg-secondary border-border font-body" />
+          </div>
+
+          <label className="flex items-center gap-3 cursor-pointer bg-secondary rounded-lg p-3">
+            <input type="checkbox" checked={form.open_wine_opt_in} onChange={(e) => setForm({ ...form, open_wine_opt_in: e.target.checked })} className="w-4 h-4 rounded" />
+            <div>
+              <p className="font-body text-sm text-foreground">🍷 Open Wine</p>
+              <p className="font-body text-xs text-muted-foreground">{formatCurrency(settings.openWinePrice)}/pessoa</p>
+            </div>
+          </label>
+
+          <div>
+            <label className="font-body text-xs text-muted-foreground mb-1 block">Observações</label>
+            <Input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Aniversário, pedidos especiais..." className="h-10 bg-secondary border-border font-body" />
+          </div>
+        </div>
+
+        <div className="border-t border-border p-5 bg-card/80 flex items-center justify-between gap-4">
+          <div>
+            <p className="font-body text-xs text-muted-foreground">Total estimado</p>
+            <p className="font-heading text-xl text-primary">{formatCurrency(total)}</p>
+            <p className="font-body text-xs text-muted-foreground">{guestCount} pessoa{guestCount !== 1 ? "s" : ""}</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+            <Button variant="gold" onClick={save} disabled={saving} className="px-6">
+              {saving ? "Salvando..." : <><Save size={16} className="mr-2" /> Salvar Reserva</>}
+            </Button>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
 // ─── Reservas Tab ─────────────────────────────────────────────────────────────
 const ReservasTab = ({ reservations, onRefresh }: { reservations: Reservation[]; onRefresh: () => void }) => {
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [showNovaReserva, setShowNovaReserva] = useState(false);
 
   const filtered = reservations.filter((r) =>
     r.reservation_name.toLowerCase().includes(search.toLowerCase()) ||
@@ -252,65 +402,83 @@ const ReservasTab = ({ reservations, onRefresh }: { reservations: Reservation[];
     onRefresh();
   };
 
+  const deleteReservation = async (id: string, name: string) => {
+  if (!window.confirm(`Excluir reserva de "${name}"? Esta ação não pode ser desfeita.`)) return;
+  await supabase.from("reservations").delete().eq("id", id);
+  toast.success("Reserva excluída");
+  onRefresh();
+};
+
   return (
-    <div className="bg-card border border-border rounded-lg overflow-hidden">
-      <div className="p-5 border-b border-border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <h2 className="font-heading text-lg text-foreground">Todas as Reservas ({filtered.length})</h2>
-        <Input placeholder="Buscar por nome ou telefone..." value={search} onChange={(e) => setSearch(e.target.value)} className="h-9 w-full sm:w-56 bg-secondary border-border font-body text-sm" />
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-border">
-              {["Nome", "Data", "Horário", "Pessoas", "Total", "Telefone", "Status", "Ações"].map((h) => (
-                <th key={h} className="text-left p-4 font-body text-xs text-muted-foreground uppercase tracking-wider whitespace-nowrap">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((r) => (
-              <>
-                <tr key={r.id} className="border-b border-border/50 hover:bg-secondary/50 cursor-pointer" onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}>
-                  <td className="p-4 font-body text-sm text-foreground font-medium">
-                    <div className="flex items-center gap-2">
-                      {r.checked_in ? <CheckCircle size={14} className="text-primary flex-shrink-0" /> : <Circle size={14} className="text-muted-foreground flex-shrink-0" />}
-                      {r.reservation_name}
-                    </div>
-                  </td>
-                  <td className="p-4 font-body text-sm text-muted-foreground whitespace-nowrap">{r.reservation_date}</td>
-                  <td className="p-4 font-body text-sm text-muted-foreground">{r.reservation_time}</td>
-                  <td className="p-4 font-body text-sm text-muted-foreground">{r.guest_count}</td>
-                  <td className="p-4 font-body text-sm text-primary whitespace-nowrap">{formatCurrency(Number(r.total_price))}</td>
-                  <td className="p-4 font-body text-sm text-muted-foreground">{r.phone || "-"}</td>
-                  <td className="p-4"><span className={cn("font-body text-xs px-3 py-1 rounded-full whitespace-nowrap", r.status === "confirmed" ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive")}>{r.status === "confirmed" ? "Confirmada" : "Cancelada"}</span></td>
-                  <td className="p-4">
-                    <div className="flex gap-1 items-center">
-                      {r.status === "confirmed"
-                        ? <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); updateStatus(r.id, "cancelled"); }} className="text-destructive text-xs">Cancelar</Button>
-                        : <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); updateStatus(r.id, "confirmed"); }} className="text-primary text-xs">Confirmar</Button>}
-                      {expandedId === r.id ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
-                    </div>
-                  </td>
-                </tr>
-                {expandedId === r.id && (
-                  <tr key={`${r.id}-exp`} className="bg-secondary/30 border-b border-border/50">
-                    <td colSpan={8} className="px-6 py-4">
-                      <div className="grid sm:grid-cols-2 gap-4">
-                        {r.notes && <div className="flex items-start gap-2"><MessageSquare size={14} className="text-primary mt-0.5 flex-shrink-0" /><div><p className="font-body text-xs text-muted-foreground uppercase tracking-wider mb-1">Observações</p><p className="font-body text-sm text-foreground">{r.notes}</p></div></div>}
-                        <div><p className="font-body text-xs text-muted-foreground uppercase tracking-wider mb-1">Open Wine</p><p className="font-body text-sm text-foreground">{r.open_wine_opt_in ? "Sim" : "Não"}</p></div>
-                        {r.checked_in_at && <div><p className="font-body text-xs text-muted-foreground uppercase tracking-wider mb-1">Check-in</p><p className="font-body text-sm text-foreground">{new Date(r.checked_in_at).toLocaleTimeString("pt-BR")}</p></div>}
-                        <div><p className="font-body text-xs text-muted-foreground uppercase tracking-wider mb-1">Criado em</p><p className="font-body text-sm text-foreground">{new Date(r.created_at).toLocaleDateString("pt-BR")}</p></div>
+    <>
+      {showNovaReserva && (
+        <NovaReservaModal onClose={() => setShowNovaReserva(false)} onSaved={onRefresh} />
+      )}
+      <div className="bg-card border border-border rounded-lg overflow-hidden">
+        <div className="p-5 border-b border-border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <h2 className="font-heading text-lg text-foreground">Todas as Reservas ({filtered.length})</h2>
+          <div className="flex w-full sm:w-auto gap-2">
+            <Input placeholder="Buscar por nome ou telefone..." value={search} onChange={(e) => setSearch(e.target.value)} className="h-9 flex-1 sm:w-56 bg-secondary border-border font-body text-sm" />
+            <Button variant="gold" size="sm" onClick={() => setShowNovaReserva(true)} className="whitespace-nowrap flex-shrink-0">
+              <Plus size={14} className="mr-1" /> Nova Reserva
+            </Button>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-border">
+                {["Nome", "Data", "Horário", "Pessoas", "Total", "Telefone", "Status", "Ações"].map((h) => (
+                  <th key={h} className="text-left p-4 font-body text-xs text-muted-foreground uppercase tracking-wider whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => (
+                <>
+                  <tr key={r.id} className="border-b border-border/50 hover:bg-secondary/50 cursor-pointer" onClick={() => setExpandedId(expandedId === r.id ? null : r.id)}>
+                    <td className="p-4 font-body text-sm text-foreground font-medium">
+                      <div className="flex items-center gap-2">
+                        {r.checked_in ? <CheckCircle size={14} className="text-primary flex-shrink-0" /> : <Circle size={14} className="text-muted-foreground flex-shrink-0" />}
+                        {r.reservation_name}
                       </div>
                     </td>
+                    <td className="p-4 font-body text-sm text-muted-foreground whitespace-nowrap">{r.reservation_date}</td>
+                    <td className="p-4 font-body text-sm text-muted-foreground">{r.reservation_time}</td>
+                    <td className="p-4 font-body text-sm text-muted-foreground">{r.guest_count}</td>
+                    <td className="p-4 font-body text-sm text-primary whitespace-nowrap">{formatCurrency(Number(r.total_price))}</td>
+                    <td className="p-4 font-body text-sm text-muted-foreground">{r.phone || "-"}</td>
+                    <td className="p-4"><span className={cn("font-body text-xs px-3 py-1 rounded-full whitespace-nowrap", r.status === "confirmed" ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive")}>{r.status === "confirmed" ? "Confirmada" : "Cancelada"}</span></td>
+                    <td className="p-4">
+                      <div className="flex gap-1 items-center">
+                        {r.status === "confirmed"
+                           ? <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); updateStatus(r.id, "cancelled"); }} className="text-destructive text-xs">Cancelar</Button>
+                               : <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); updateStatus(r.id, "confirmed"); }} className="text-primary text-xs">Confirmar</Button>}
+                        <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); deleteReservation(r.id, r.reservation_name); }} className="text-destructive text-xs"><Trash2 size={14} /></Button>
+{expandedId === r.id ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
+                     </div>
+                    </td>
                   </tr>
-                )}
-              </>
-            ))}
-          </tbody>
-        </table>
-        {filtered.length === 0 && <div className="p-8 text-center font-body text-sm text-muted-foreground">Nenhuma reserva encontrada</div>}
+                  {expandedId === r.id && (
+                    <tr key={`${r.id}-exp`} className="bg-secondary/30 border-b border-border/50">
+                      <td colSpan={8} className="px-6 py-4">
+                        <div className="grid sm:grid-cols-2 gap-4">
+                          {r.notes && <div className="flex items-start gap-2"><MessageSquare size={14} className="text-primary mt-0.5 flex-shrink-0" /><div><p className="font-body text-xs text-muted-foreground uppercase tracking-wider mb-1">Observações</p><p className="font-body text-sm text-foreground">{r.notes}</p></div></div>}
+                          <div><p className="font-body text-xs text-muted-foreground uppercase tracking-wider mb-1">Open Wine</p><p className="font-body text-sm text-foreground">{r.open_wine_opt_in ? "Sim" : "Não"}</p></div>
+                          {r.checked_in_at && <div><p className="font-body text-xs text-muted-foreground uppercase tracking-wider mb-1">Check-in</p><p className="font-body text-sm text-foreground">{new Date(r.checked_in_at).toLocaleTimeString("pt-BR")}</p></div>}
+                          <div><p className="font-body text-xs text-muted-foreground uppercase tracking-wider mb-1">Criado em</p><p className="font-body text-sm text-foreground">{new Date(r.created_at).toLocaleDateString("pt-BR")}</p></div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              ))}
+            </tbody>
+          </table>
+          {filtered.length === 0 && <div className="p-8 text-center font-body text-sm text-muted-foreground">Nenhuma reserva encontrada</div>}
+        </div>
       </div>
-    </div>
+    </>
   );
 };
 

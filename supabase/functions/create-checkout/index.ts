@@ -12,11 +12,6 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const stripeKey = Deno.env.get('STRIPE_SECRET_KEY')
-    if (!stripeKey) throw new Error('STRIPE_SECRET_KEY not configured')
-
-    const stripe = new Stripe(stripeKey, { apiVersion: '2025-04-30.basil' })
-
     const {
       reservation_name,
       reservation_date,
@@ -25,12 +20,13 @@ Deno.serve(async (req) => {
       guest_count,
       total_price,
       phone,
+      notes,
       open_wine_opt_in,
       success_url,
       cancel_url,
     } = await req.json()
 
-    if (!reservation_name || !reservation_date || !reservation_time || !total_price) {
+    if (!reservation_name || !reservation_date || !reservation_time) {
       return new Response(JSON.stringify({ error: 'Dados incompletos' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -60,6 +56,38 @@ Deno.serve(async (req) => {
       })
     }
 
+    // Free reservation — skip Stripe, save directly to DB
+    if (!total_price || total_price <= 0) {
+      const { error: dbError } = await supabase.from('reservations').insert({
+        reservation_name,
+        reservation_date,
+        reservation_time,
+        guests: guests ?? [],
+        guest_count,
+        total_price: 0,
+        phone: phone || null,
+        notes: null,
+        open_wine_opt_in: open_wine_opt_in ?? false,
+        status: 'confirmed',
+      })
+
+      if (dbError) {
+        return new Response(JSON.stringify({ error: dbError.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      return new Response(JSON.stringify({ free: true, url: success_url }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    const stripeKey = Deno.env.get('STRIPE_SECRET_KEY')
+    if (!stripeKey) throw new Error('STRIPE_SECRET_KEY not configured')
+
+    const stripe = new Stripe(stripeKey, { apiVersion: '2025-04-30.basil' })
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [
@@ -87,6 +115,7 @@ Deno.serve(async (req) => {
         phone: phone || '',
         open_wine_opt_in: String(open_wine_opt_in),
         guests: JSON.stringify(guests),
+        notes: notes || '',
       },
     })
 

@@ -46,6 +46,7 @@ Deno.serve(async (req) => {
         guest_count: Number(meta.guest_count),
         total_price: Number(meta.total_price),
         phone: meta.phone || null,
+        notes: meta.notes || null,
         open_wine_opt_in: meta.open_wine_opt_in === 'true',
         guests,
         status: 'confirmed',

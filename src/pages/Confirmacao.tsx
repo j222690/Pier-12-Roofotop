@@ -27,16 +27,31 @@ const Confirmacao = () => {
   const [reservation, setReservation] = useState<Reservation | null>(null);
 
   useEffect(() => {
-    if (status === "success" && sessionId) {
-      // Small delay to let webhook process
+    if (status === "success") {
+      // Small delay to let webhook/insert process
       setTimeout(async () => {
-        const { data } = await supabase
+        let query = supabase
           .from("reservations")
           .select("*")
           .eq("status", "confirmed")
           .order("created_at", { ascending: false })
-          .limit(1)
-          .single();
+          .limit(1);
+
+        // Se veio do Stripe, tenta filtrar pela session (via metadata armazenado)
+        // Para reservas gratuitas (sem session_id), pega a mais recente
+        if (sessionId) {
+          // Tenta buscar pela session_id se disponível
+          const { data: bySession } = await supabase
+            .from("reservations")
+            .select("*")
+            .eq("status", "confirmed")
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .single();
+          if (bySession) { setReservation(bySession as Reservation); return; }
+        }
+
+        const { data } = await query.single();
         if (data) setReservation(data as Reservation);
       }, 1500);
     }
@@ -91,7 +106,7 @@ const Confirmacao = () => {
             <p className="font-body text-xs tracking-[0.4em] text-primary uppercase mb-3">Reserva Confirmada</p>
             <h1 className="font-heading text-4xl text-gradient-gold mb-4">Tudo certo! 🎉</h1>
             <p className="font-body text-muted-foreground">
-              Seu pagamento foi aprovado e sua mesa está garantida no Pier 12 Rooftop.
+              Sua reserva foi registrada e sua mesa está garantida no Pier 12 Rooftop.
             </p>
           </motion.div>
 

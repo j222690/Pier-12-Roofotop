@@ -171,7 +171,7 @@ const ReservationForm = () => {
     if (!phone.trim()) errors.phone = "Informe seu telefone / WhatsApp";
     if (!date) errors.date = "Selecione a data";
     if (date && !time) errors.time = "Selecione o horário";
-    if (total <= 0) errors.guests = "Adicione pelo menos um convidado pagante";
+    if (guests.length === 0) errors.guests = "Adicione pelo menos um convidado";
 
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
@@ -395,11 +395,8 @@ const ReservationForm = () => {
               {isOpenWineEvent && (
                 <div className="mt-4 space-y-2">
                   <label className="font-body text-xs tracking-widest text-primary uppercase block">
-                    {currentEvent.opt_in_label || "Participar do Open Wine?"}
+                    {currentEvent.opt_in_label || "Participar do evento?"}
                   </label>
-                  <p className="font-body text-xs text-muted-foreground">
-                    Inclui vinho à vontade da noite — mesmo valor para todos.
-                  </p>
                   <div className="flex gap-3 mt-2">
                     <button
                       onClick={() => setOpenWineOptIn(true)}
