@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -18,14 +18,15 @@ export interface ReservationNotification {
 }
 
 const STORAGE_KEY = "pier12_notifications";
+const LAST_CHECK_KEY = "pier12_notifications_last_check";
 const MAX_NOTIFICATIONS = 50;
+const POLL_INTERVAL_MS = 10_000; // check every 10 seconds
 
 function loadFromStorage(): ReservationNotification[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return parsed.map((n: ReservationNotification) => ({
+    return JSON.parse(raw).map((n: ReservationNotification) => ({
       ...n,
       receivedAt: new Date(n.receivedAt),
     }));
@@ -36,72 +37,119 @@ function loadFromStorage(): ReservationNotification[] {
 
 function saveToStorage(notifications: ReservationNotification[]) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(notifications.slice(0, MAX_NOTIFICATIONS)));
-  } catch {
-    // ignore storage errors
-  }
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(notifications.slice(0, MAX_NOTIFICATIONS))
+    );
+  } catch {}
+}
+
+function getLastCheck(): string {
+  // Default: 24h ago so we don't spam on first load
+  return (
+    localStorage.getItem(LAST_CHECK_KEY) ||
+    new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  );
+}
+
+function setLastCheck(iso: string) {
+  localStorage.setItem(LAST_CHECK_KEY, iso);
 }
 
 export function useNotifications() {
   const [notifications, setNotifications] = useState<ReservationNotification[]>(loadFromStorage);
+  const lastCheckRef = useRef<string>(getLastCheck());
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  const addNotification = useCallback((reservation: {
-    id: string;
-    reservation_name: string;
-    reservation_date: string;
-    reservation_time: string;
-    guest_count: number;
-    total_price: number;
-    phone: string | null;
-    open_wine_opt_in: boolean;
-    status?: string;
-  }) => {
-    // Only notify for confirmed reservations
-    if (reservation.status && reservation.status !== "confirmed") return;
+  const processNewReservations = useCallback(
+    (rows: {
+      id: string;
+      reservation_name: string;
+      reservation_date: string;
+      reservation_time: string;
+      guest_count: number;
+      total_price: number;
+      phone: string | null;
+      open_wine_opt_in: boolean;
+      created_at: string;
+    }[]) => {
+      if (rows.length === 0) return;
 
-    setNotifications((prev) => {
-      // Avoid duplicates
-      if (prev.some((n) => n.reservationId === reservation.id)) return prev;
+      setNotifications((prev) => {
+        const existingIds = new Set(prev.map((n) => n.reservationId));
+        const newOnes: ReservationNotification[] = rows
+          .filter((r) => !existingIds.has(r.id))
+          .map((r) => ({
+            id: crypto.randomUUID(),
+            reservationId: r.id,
+            reservation_name: r.reservation_name,
+            reservation_date: r.reservation_date,
+            reservation_time: r.reservation_time,
+            guest_count: r.guest_count,
+            total_price: r.total_price,
+            phone: r.phone,
+            open_wine_opt_in: r.open_wine_opt_in,
+            receivedAt: new Date(),
+            read: false,
+          }));
 
-      const newNotification: ReservationNotification = {
-        id: crypto.randomUUID(),
-        reservationId: reservation.id,
-        reservation_name: reservation.reservation_name,
-        reservation_date: reservation.reservation_date,
-        reservation_time: reservation.reservation_time,
-        guest_count: reservation.guest_count,
-        total_price: reservation.total_price,
-        phone: reservation.phone,
-        open_wine_opt_in: reservation.open_wine_opt_in,
-        receivedAt: new Date(),
-        read: false,
-      };
+        if (newOnes.length === 0) return prev;
 
-      const updated = [newNotification, ...prev].slice(0, MAX_NOTIFICATIONS);
-      saveToStorage(updated);
-      return updated;
-    });
+        // Browser notification for each new reservation
+        if (Notification.permission === "granted") {
+          newOnes.forEach((n) => {
+            try {
+              const dateFormatted = format(
+                new Date(n.reservation_date + "T12:00:00"),
+                "dd/MM",
+                { locale: ptBR }
+              );
+              new Notification("🎉 Nova Reserva - Pier 12", {
+                body: `${n.reservation_name} • ${n.guest_count} pessoa${n.guest_count !== 1 ? "s" : ""} • ${dateFormatted} às ${n.reservation_time}`,
+                icon: "/favicon.png",
+                tag: n.reservationId,
+              });
+            } catch {}
+          });
+        }
 
-    // Browser notification (if permission granted)
-    if (Notification.permission === "granted") {
-      try {
-        const dateFormatted = format(
-          new Date(reservation.reservation_date + "T12:00:00"),
-          "dd/MM",
-          { locale: ptBR }
-        );
-        new Notification("🎉 Nova Reserva - Pier 12", {
-          body: `${reservation.reservation_name} • ${reservation.guest_count} pessoas • ${dateFormatted} às ${reservation.reservation_time}`,
-          icon: "/favicon.png",
-          tag: reservation.id,
-        });
-      } catch {
-        // ignore notification errors
+        const updated = [...newOnes, ...prev].slice(0, MAX_NOTIFICATIONS);
+        saveToStorage(updated);
+        return updated;
+      });
+    },
+    []
+  );
+
+  // Poll Supabase every 10s for new confirmed reservations
+  useEffect(() => {
+    const poll = async () => {
+      const since = lastCheckRef.current;
+      const now = new Date().toISOString();
+
+      const { data, error } = await supabase
+        .from("reservations")
+        .select(
+          "id, reservation_name, reservation_date, reservation_time, guest_count, total_price, phone, open_wine_opt_in, created_at"
+        )
+        .eq("status", "confirmed")
+        .gt("created_at", since)
+        .order("created_at", { ascending: false });
+
+      if (!error && data && data.length > 0) {
+        processNewReservations(data);
       }
-    }
-  }, []);
+
+      lastCheckRef.current = now;
+      setLastCheck(now);
+    };
+
+    // Run immediately on mount, then every 10s
+    poll();
+    const interval = setInterval(poll, POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [processNewReservations]);
 
   const markAllRead = useCallback(() => {
     setNotifications((prev) => {
@@ -124,50 +172,6 @@ export function useNotifications() {
     localStorage.removeItem(STORAGE_KEY);
   }, []);
 
-  // Subscribe to Supabase Realtime
-  useEffect(() => {
-    const channel = supabase
-      .channel("reservation-notifications")
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "reservations",
-          // ⚠️ Removed filter here — filters on INSERT are unreliable in Supabase Realtime.
-          // We filter by status in addNotification() instead.
-        },
-        (payload) => {
-          console.log("[Notifications] New reservation received via Realtime:", payload.new);
-          addNotification(payload.new as Parameters<typeof addNotification>[0]);
-        }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "reservations",
-        },
-        (payload) => {
-          const r = payload.new as Parameters<typeof addNotification>[0];
-          // Notify if a reservation was updated TO confirmed status
-          if (r.status === "confirmed" && (payload.old as { status?: string }).status !== "confirmed") {
-            console.log("[Notifications] Reservation confirmed via UPDATE:", r);
-            addNotification(r);
-          }
-        }
-      )
-      .subscribe((status) => {
-        console.log("[Notifications] Realtime channel status:", status);
-      });
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [addNotification]);
-
-  // Request browser notification permission
   const requestPermission = useCallback(async () => {
     if ("Notification" in window && Notification.permission === "default") {
       await Notification.requestPermission();
