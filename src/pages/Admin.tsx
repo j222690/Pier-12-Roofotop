@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { formatCurrency } from "@/lib/reservation-utils";
 import { useBusinessSettings } from "@/hooks/use-business-settings";
+import { NotificationBell } from "@/components/NotificationBell";
 import {
   Lock, LayoutDashboard, CalendarDays, Users, DollarSign, LogOut,
   TrendingUp, Wine, UtensilsCrossed, Settings, BarChart3,
@@ -172,6 +173,7 @@ const AdminDashboard = ({ onLogout, role }: { onLogout: () => void; role: AdminR
                 <Download size={14} className="mr-1" /> Instalar App
               </Button>
             )}
+            <NotificationBell />
             <Button variant="ghost" size="sm" onClick={onLogout} className="text-muted-foreground"><LogOut size={16} className="mr-2" /> Sair</Button>
           </div>
         </div>
