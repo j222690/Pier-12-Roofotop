@@ -56,7 +56,11 @@ export function useNotifications() {
     total_price: number;
     phone: string | null;
     open_wine_opt_in: boolean;
+    status?: string;
   }) => {
+    // Only notify for confirmed reservations
+    if (reservation.status && reservation.status !== "confirmed") return;
+
     setNotifications((prev) => {
       // Avoid duplicates
       if (prev.some((n) => n.reservationId === reservation.id)) return prev;
@@ -79,6 +83,24 @@ export function useNotifications() {
       saveToStorage(updated);
       return updated;
     });
+
+    // Browser notification (if permission granted)
+    if (Notification.permission === "granted") {
+      try {
+        const dateFormatted = format(
+          new Date(reservation.reservation_date + "T12:00:00"),
+          "dd/MM",
+          { locale: ptBR }
+        );
+        new Notification("🎉 Nova Reserva - Pier 12", {
+          body: `${reservation.reservation_name} • ${reservation.guest_count} pessoas • ${dateFormatted} às ${reservation.reservation_time}`,
+          icon: "/favicon.png",
+          tag: reservation.id,
+        });
+      } catch {
+        // ignore notification errors
+      }
+    }
   }, []);
 
   const markAllRead = useCallback(() => {
@@ -112,33 +134,33 @@ export function useNotifications() {
           event: "INSERT",
           schema: "public",
           table: "reservations",
-          filter: "status=eq.confirmed",
+          // ⚠️ Removed filter here — filters on INSERT are unreliable in Supabase Realtime.
+          // We filter by status in addNotification() instead.
         },
         (payload) => {
-          const r = payload.new as {
-            id: string;
-            reservation_name: string;
-            reservation_date: string;
-            reservation_time: string;
-            guest_count: number;
-            total_price: number;
-            phone: string | null;
-            open_wine_opt_in: boolean;
-          };
-          addNotification(r);
-
-          // Browser notification (if permission granted)
-          if (Notification.permission === "granted") {
-            const dateFormatted = format(new Date(r.reservation_date + "T12:00:00"), "dd/MM", { locale: ptBR });
-            new Notification("🎉 Nova Reserva - Pier 12", {
-              body: `${r.reservation_name} • ${r.guest_count} pessoas • ${dateFormatted} às ${r.reservation_time}`,
-              icon: "/favicon.png",
-              tag: r.id,
-            });
+          console.log("[Notifications] New reservation received via Realtime:", payload.new);
+          addNotification(payload.new as Parameters<typeof addNotification>[0]);
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "reservations",
+        },
+        (payload) => {
+          const r = payload.new as Parameters<typeof addNotification>[0];
+          // Notify if a reservation was updated TO confirmed status
+          if (r.status === "confirmed" && (payload.old as { status?: string }).status !== "confirmed") {
+            console.log("[Notifications] Reservation confirmed via UPDATE:", r);
+            addNotification(r);
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log("[Notifications] Realtime channel status:", status);
+      });
 
     return () => {
       supabase.removeChannel(channel);
