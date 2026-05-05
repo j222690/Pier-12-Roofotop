@@ -1,194 +1,155 @@
-import { useEffect, useRef, useState } from "react";
-import { Bell, X, CheckCheck, Trash2, Users, Phone, Wine, Calendar } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { formatCurrency } from "@/lib/reservation-utils";
-import { type ReservationNotification, useNotifications } from "@/hooks/use-notifications";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
-function timeAgo(date: Date): string {
-  const diffMs = Date.now() - date.getTime();
-  const diffMin = Math.floor(diffMs / 60000);
-  if (diffMin < 1) return "agora mesmo";
-  if (diffMin < 60) return `há ${diffMin}min`;
-  const diffH = Math.floor(diffMin / 60);
-  if (diffH < 24) return `há ${diffH}h`;
-  return format(date, "dd/MM", { locale: ptBR });
+export interface ReservationNotification {
+  id: string;
+  reservationId: string;
+  reservation_name: string;
+  reservation_date: string;
+  reservation_time: string;
+  guest_count: number;
+  total_price: number;
+  phone: string | null;
+  open_wine_opt_in: boolean;
+  receivedAt: Date;
+  read: boolean;
 }
 
-function formatReservationDate(dateStr: string): string {
+const STORAGE_KEY = "pier12_notifications";
+const LAST_CHECK_KEY = "pier12_notifications_last_check";
+const MAX_NOTIFICATIONS = 50;
+const POLL_INTERVAL_MS = 10000;
+
+function loadFromStorage(): ReservationNotification[] {
   try {
-    return format(new Date(dateStr + "T12:00:00"), "dd/MM/yyyy (EEEE)", { locale: ptBR });
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw).map((n: ReservationNotification) => ({
+      ...n,
+      receivedAt: new Date(n.receivedAt),
+    }));
   } catch {
-    return dateStr;
+    return [];
   }
 }
 
-interface NotificationItemProps {
-  notification: ReservationNotification;
-  onRead: (id: string) => void;
+function saveToStorage(notifications: ReservationNotification[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(notifications.slice(0, MAX_NOTIFICATIONS)));
+  } catch {}
 }
 
-const NotificationItem = ({ notification: n, onRead }: NotificationItemProps) => (
-  <div
-    className={cn(
-      "p-4 border-b border-border/50 transition-colors cursor-default",
-      !n.read && "bg-primary/5"
-    )}
-    onClick={() => onRead(n.id)}
-  >
-    <div className="flex items-start justify-between gap-2 mb-2">
-      <div className="flex items-center gap-2">
-        {!n.read && (
-          <span className="w-2 h-2 rounded-full bg-primary flex-shrink-0 mt-1" />
-        )}
-        <p className={cn("font-body text-sm font-semibold text-foreground", n.read && "ml-4")}>
-          {n.reservation_name}
-        </p>
-      </div>
-      <span className="font-body text-[10px] text-muted-foreground whitespace-nowrap flex-shrink-0">
-        {timeAgo(n.receivedAt)}
-      </span>
-    </div>
+function getLastCheck(): string {
+  return localStorage.getItem(LAST_CHECK_KEY) || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+}
 
-    <div className="ml-4 space-y-1">
-      <div className="flex items-center gap-2 font-body text-xs text-muted-foreground">
-        <Calendar size={11} className="text-primary flex-shrink-0" />
-        <span>{formatReservationDate(n.reservation_date)} às {n.reservation_time}</span>
-      </div>
-      <div className="flex items-center gap-2 font-body text-xs text-muted-foreground">
-        <Users size={11} className="text-primary flex-shrink-0" />
-        <span>{n.guest_count} {n.guest_count === 1 ? "pessoa" : "pessoas"}</span>
-        <span className="text-primary font-medium ml-1">{formatCurrency(Number(n.total_price))}</span>
-      </div>
-      {n.phone && (
-        <div className="flex items-center gap-2 font-body text-xs text-muted-foreground">
-          <Phone size={11} className="text-primary flex-shrink-0" />
-          <span>{n.phone}</span>
-        </div>
-      )}
-      {n.open_wine_opt_in && (
-        <div className="flex items-center gap-2 font-body text-xs text-primary">
-          <Wine size={11} className="flex-shrink-0" />
-          <span>Vinho aberto incluído</span>
-        </div>
-      )}
-    </div>
-  </div>
-);
+function setLastCheck(iso: string) {
+  localStorage.setItem(LAST_CHECK_KEY, iso);
+}
 
-export const NotificationBell = () => {
-  const { notifications, unreadCount, markAllRead, markRead, clearAll, requestPermission } = useNotifications();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+export function useNotifications() {
+  const [notifications, setNotifications] = useState<ReservationNotification[]>(loadFromStorage);
+  const lastCheckRef = useRef<string>(getLastCheck());
 
-  // Close on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const processNewReservations = useCallback((rows: {
+    id: string;
+    reservation_name: string;
+    reservation_date: string;
+    reservation_time: string;
+    guest_count: number;
+    total_price: number;
+    phone: string | null;
+    open_wine_opt_in: boolean;
+    created_at: string;
+  }[]) => {
+    if (rows.length === 0) return;
+    setNotifications((prev) => {
+      const existingIds = new Set(prev.map((n) => n.reservationId));
+      const newOnes: ReservationNotification[] = rows
+        .filter((r) => !existingIds.has(r.id))
+        .map((r) => ({
+          id: crypto.randomUUID(),
+          reservationId: r.id,
+          reservation_name: r.reservation_name,
+          reservation_date: r.reservation_date,
+          reservation_time: r.reservation_time,
+          guest_count: r.guest_count,
+          total_price: r.total_price,
+          phone: r.phone,
+          open_wine_opt_in: r.open_wine_opt_in,
+          receivedAt: new Date(),
+          read: false,
+        }));
+      if (newOnes.length === 0) return prev;
+      if (Notification.permission === "granted") {
+        newOnes.forEach((n) => {
+          try {
+            const dateFormatted = format(new Date(n.reservation_date + "T12:00:00"), "dd/MM", { locale: ptBR });
+            new Notification("🎉 Nova Reserva - Pier 12", {
+              body: `${n.reservation_name} • ${n.guest_count} pessoa${n.guest_count !== 1 ? "s" : ""} • ${dateFormatted} às ${n.reservation_time}`,
+              icon: "/favicon.png",
+              tag: n.reservationId,
+            });
+          } catch {}
+        });
       }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+      const updated = [...newOnes, ...prev].slice(0, MAX_NOTIFICATIONS);
+      saveToStorage(updated);
+      return updated;
+    });
   }, []);
 
-  // Request permission when first opened
-  const handleOpen = () => {
-    setOpen((prev) => !prev);
-    requestPermission();
-  };
+  useEffect(() => {
+    const poll = async () => {
+      const since = lastCheckRef.current;
+      const now = new Date().toISOString();
+      const { data, error } = await supabase
+        .from("reservations")
+        .select("id, reservation_name, reservation_date, reservation_time, guest_count, total_price, phone, open_wine_opt_in, created_at")
+        .eq("status", "confirmed")
+        .gt("created_at", since)
+        .order("created_at", { ascending: false });
+      if (!error && data && data.length > 0) {
+        processNewReservations(data);
+      }
+      lastCheckRef.current = now;
+      setLastCheck(now);
+    };
+    poll();
+    const interval = setInterval(poll, POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [processNewReservations]);
 
-  return (
-    <div ref={ref} className="relative">
-      {/* Bell button */}
-      <button
-        onClick={handleOpen}
-        className={cn(
-          "relative flex items-center justify-center w-9 h-9 rounded-lg transition-colors",
-          open
-            ? "bg-primary/15 text-primary"
-            : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-        )}
-        aria-label="Notificações"
-      >
-        <Bell size={18} />
-        {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-background font-body text-[10px] font-bold flex items-center justify-center leading-none">
-            {unreadCount > 99 ? "99+" : unreadCount}
-          </span>
-        )}
-      </button>
+  const markAllRead = useCallback(() => {
+    setNotifications((prev) => {
+      const updated = prev.map((n) => ({ ...n, read: true }));
+      saveToStorage(updated);
+      return updated;
+    });
+  }, []);
 
-      {/* Dropdown panel */}
-      {open && (
-        <div className="absolute right-0 top-11 w-80 max-h-[520px] bg-card border border-border rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
-          {/* Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
-            <div className="flex items-center gap-2">
-              <Bell size={14} className="text-primary" />
-              <span className="font-heading text-sm text-foreground">Notificações</span>
-              {unreadCount > 0 && (
-                <span className="font-body text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">
-                  {unreadCount} nova{unreadCount !== 1 ? "s" : ""}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-1">
-              {unreadCount > 0 && (
-                <button
-                  onClick={markAllRead}
-                  className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-                  title="Marcar todas como lidas"
-                >
-                  <CheckCheck size={14} />
-                </button>
-              )}
-              {notifications.length > 0 && (
-                <button
-                  onClick={clearAll}
-                  className="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                  title="Limpar todas"
-                >
-                  <Trash2 size={14} />
-                </button>
-              )}
-              <button
-                onClick={() => setOpen(false)}
-                className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-              >
-                <X size={14} />
-              </button>
-            </div>
-          </div>
+  const markRead = useCallback((id: string) => {
+    setNotifications((prev) => {
+      const updated = prev.map((n) => (n.id === id ? { ...n, read: true } : n));
+      saveToStorage(updated);
+      return updated;
+    });
+  }, []);
 
-          {/* List */}
-          <div className="overflow-y-auto flex-1">
-            {notifications.length === 0 ? (
-              <div className="p-8 text-center">
-                <Bell size={32} className="text-muted-foreground/30 mx-auto mb-3" />
-                <p className="font-body text-sm text-muted-foreground">Nenhuma notificação</p>
-                <p className="font-body text-xs text-muted-foreground/60 mt-1">
-                  Novas reservas aparecerão aqui em tempo real
-                </p>
-              </div>
-            ) : (
-              notifications.map((n) => (
-                <NotificationItem key={n.id} notification={n} onRead={markRead} />
-              ))
-            )}
-          </div>
+  const clearAll = useCallback(() => {
+    setNotifications([]);
+    localStorage.removeItem(STORAGE_KEY);
+  }, []);
 
-          {/* Footer hint */}
-          {notifications.length > 0 && (
-            <div className="px-4 py-2 border-t border-border/50 flex-shrink-0">
-              <p className="font-body text-[10px] text-muted-foreground/60 text-center">
-                Clique em uma notificação para marcá-la como lida
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
+  const requestPermission = useCallback(async () => {
+    if ("Notification" in window && Notification.permission === "default") {
+      await Notification.requestPermission();
+    }
+  }, []);
+
+  return { notifications, unreadCount, markAllRead, markRead, clearAll, requestPermission };
+}
