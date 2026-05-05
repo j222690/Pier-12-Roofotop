@@ -7,6 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { formatCurrency } from "@/lib/reservation-utils";
 import { useBusinessSettings } from "@/hooks/use-business-settings";
 import { NotificationBell } from "@/components/NotificationBell";
+import { usePushSubscription } from "@/hooks/use-push-subscription";
 import {
   Lock, LayoutDashboard, CalendarDays, Users, DollarSign, LogOut,
   TrendingUp, Wine, UtensilsCrossed, Settings, BarChart3,
@@ -24,7 +25,7 @@ const ADMIN_CREDENTIALS = [
 ];
 
 // ─── Login ────────────────────────────────────────────────────────────────────
-const AdminLogin = ({ onLogin }: { onLogin: (role: AdminRole) => void }) => {
+const AdminLogin = ({ onLogin }: { onLogin: (role: AdminRole, username: string) => void }) => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -32,7 +33,7 @@ const AdminLogin = ({ onLogin }: { onLogin: (role: AdminRole) => void }) => {
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     const match = ADMIN_CREDENTIALS.find((c) => c.username === username && c.password === password);
-    if (match) { onLogin(match.role); } else { setError("Credenciais inválidas"); }
+    if (match) { onLogin(match.role, username); } else { setError("Credenciais inválidas"); }
   };
 
   return (
@@ -97,12 +98,13 @@ interface CustomEvent {
 const DAY_NAMES = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
-const AdminDashboard = ({ onLogout, role }: { onLogout: () => void; role: AdminRole }) => {
+const AdminDashboard = ({ onLogout, role, username }: { onLogout: () => void; role: AdminRole; username: string }) => {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [events, setEvents] = useState<CustomEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const { permission, subscribed, loading: pushLoading, subscribe, unsubscribe } = usePushSubscription(username);
 
   useEffect(() => {
     const handler = (e: Event) => { e.preventDefault(); setDeferredPrompt(e as BeforeInstallPromptEvent); };
@@ -174,6 +176,16 @@ const AdminDashboard = ({ onLogout, role }: { onLogout: () => void; role: AdminR
               </Button>
             )}
             <NotificationBell />
+            {permission !== "unsupported" && (
+              <button
+                onClick={subscribed ? unsubscribe : subscribe}
+                disabled={pushLoading}
+                title={subscribed ? "Desativar notificações push" : "Ativar notificações push no dispositivo"}
+                className={`flex items-center justify-center w-9 h-9 rounded-lg transition-colors text-xs font-body ${subscribed ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-foreground hover:bg-secondary"}`}
+              >
+                {pushLoading ? "..." : subscribed ? "🔔" : "🔕"}
+              </button>
+            )}
             <Button variant="ghost" size="sm" onClick={onLogout} className="text-muted-foreground"><LogOut size={16} className="mr-2" /> Sair</Button>
           </div>
         </div>
@@ -1027,9 +1039,10 @@ const ConfigTab = () => {
 const Admin = () => {
   const [authenticated, setAuthenticated] = useState(false);
   const [role, setRole] = useState<AdminRole>("manager");
+  const [username, setUsername] = useState<string>("");
   return !authenticated
-    ? <AdminLogin onLogin={(r) => { setRole(r); setAuthenticated(true); }} />
-    : <AdminDashboard onLogout={() => setAuthenticated(false)} role={role} />;
+    ? <AdminLogin onLogin={(r, u) => { setRole(r); setUsername(u); setAuthenticated(true); }} />
+    : <AdminDashboard onLogout={() => setAuthenticated(false)} role={role} username={username} />;
 };
 
 declare global {

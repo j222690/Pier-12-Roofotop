@@ -82,7 +82,6 @@ export const NotificationBell = () => {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  // Close on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
@@ -93,7 +92,6 @@ export const NotificationBell = () => {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Request permission when first opened
   const handleOpen = () => {
     setOpen((prev) => !prev);
     requestPermission();
@@ -101,7 +99,6 @@ export const NotificationBell = () => {
 
   return (
     <div ref={ref} className="relative">
-      {/* Bell button */}
       <button
         onClick={handleOpen}
         className={cn(
@@ -120,10 +117,8 @@ export const NotificationBell = () => {
         )}
       </button>
 
-      {/* Dropdown panel */}
       {open && (
         <div className="absolute right-0 top-11 w-80 max-h-[520px] bg-card border border-border rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
-          {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
             <div className="flex items-center gap-2">
               <Bell size={14} className="text-primary" />
@@ -162,7 +157,6 @@ export const NotificationBell = () => {
             </div>
           </div>
 
-          {/* List */}
           <div className="overflow-y-auto flex-1">
             {notifications.length === 0 ? (
               <div className="p-8 text-center">
@@ -179,7 +173,6 @@ export const NotificationBell = () => {
             )}
           </div>
 
-          {/* Footer hint */}
           {notifications.length > 0 && (
             <div className="px-4 py-2 border-t border-border/50 flex-shrink-0">
               <p className="font-body text-[10px] text-muted-foreground/60 text-center">
