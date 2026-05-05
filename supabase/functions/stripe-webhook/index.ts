@@ -39,20 +39,51 @@ Deno.serve(async (req) => {
       let guests
       try { guests = JSON.parse(meta.guests || '[]') } catch { guests = [] }
 
-      await supabase.from('reservations').insert({
-        reservation_name: meta.reservation_name,
-        reservation_date: meta.reservation_date,
-        reservation_time: meta.reservation_time,
-        guest_count: Number(meta.guest_count),
-        total_price: Number(meta.total_price),
-        phone: meta.phone || null,
-        notes: meta.notes || null,
-        open_wine_opt_in: meta.open_wine_opt_in === 'true',
-        guests,
-        status: 'confirmed',
-      })
+      // Cria a reserva e pega o ID gerado
+      const { data: reservation, error: insertError } = await supabase
+        .from('reservations')
+        .insert({
+          reservation_name: meta.reservation_name,
+          reservation_date: meta.reservation_date,
+          reservation_time: meta.reservation_time,
+          guest_count: Number(meta.guest_count),
+          total_price: Number(meta.total_price),
+          phone: meta.phone || null,
+          notes: meta.notes || null,
+          open_wine_opt_in: meta.open_wine_opt_in === 'true',
+          guests,
+          status: 'confirmed',
+        })
+        .select('id')
+        .single()
 
-      console.log('Reservation created for:', meta.reservation_name)
+      if (insertError) throw insertError
+
+      console.log('Reservation created for:', meta.reservation_name, '| id:', reservation?.id)
+
+      // Dispara o push para todos os admins
+      try {
+        const pushUrl = `${supabaseUrl}/functions/v1/send-push-notification`
+        const pushRes = await fetch(pushUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseKey}`,
+          },
+          body: JSON.stringify({
+            reservationId:    reservation?.id ?? '',
+            reservation_name: meta.reservation_name,
+            reservation_date: meta.reservation_date,
+            reservation_time: meta.reservation_time,
+            guest_count:      Number(meta.guest_count),
+            total_price:      Number(meta.total_price),
+          }),
+        })
+        const pushJson = await pushRes.json()
+        console.log('Push result:', JSON.stringify(pushJson))
+      } catch (pushErr) {
+        console.error('Push error (non-fatal):', pushErr)
+      }
     }
 
     return new Response(JSON.stringify({ received: true }), {
