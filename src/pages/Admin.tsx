@@ -1064,13 +1064,32 @@ const ConfigTab = () => {
 };
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
+const ADMIN_SESSION_KEY = "pier12_admin_session";
+
 const Admin = () => {
-  const [authenticated, setAuthenticated] = useState(false);
-  const [role, setRole] = useState<AdminRole>("manager");
-  const [username, setUsername] = useState<string>("");
-  return !authenticated
-    ? <AdminLogin onLogin={(r, u) => { setRole(r); setUsername(u); setAuthenticated(true); }} />
-    : <AdminDashboard onLogout={() => setAuthenticated(false)} role={role} username={username} />;
+  const [session, setSession] = useState<{ role: AdminRole; username: string } | null>(() => {
+    try {
+      const stored = localStorage.getItem(ADMIN_SESSION_KEY);
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const handleLogin = (role: AdminRole, username: string) => {
+    const s = { role, username };
+    localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(s));
+    setSession(s);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem(ADMIN_SESSION_KEY);
+    setSession(null);
+  };
+
+  return !session
+    ? <AdminLogin onLogin={handleLogin} />
+    : <AdminDashboard onLogout={handleLogout} role={session.role} username={session.username} />;
 };
 
 declare global {

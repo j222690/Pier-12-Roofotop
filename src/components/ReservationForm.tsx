@@ -656,7 +656,9 @@ const ReservationForm = () => {
         <p className="font-body text-xs text-muted-foreground">🧒 De 10 a 12 anos: <strong className="text-foreground">meia-entrada</strong></p>
         <p className="font-body text-xs text-muted-foreground">🎂 Aniversariante: <strong className="text-foreground">entrada cortesia</strong></p>
         <p className="font-body text-xs text-muted-foreground">🍾 {settings.sparklingBonusThreshold}+ pessoas: <strong className="text-foreground">espumante selecionado de cortesia</strong></p>
-        <p className="font-body text-xs text-muted-foreground">🍷 Open Wine (quinta): <strong className="text-foreground">{formatCurrency(settings.openWinePrice)}/pessoa — mesmo valor para todos</strong></p>
+        {dbEvents.filter(e => e.has_opt_in && e.special_price).map(e => (
+          <p key={e.id} className="font-body text-xs text-muted-foreground">🍷 {e.event_label || e.event_name}: <strong className="text-foreground">{formatCurrency(e.special_price!)}/pessoa — mesmo valor para todos</strong></p>
+        ))}
         <p className="font-body text-xs text-muted-foreground">🪑 Mesa: <strong className="text-foreground">por ordem de chegada ou tamanho do grupo</strong></p>
       </div>
 

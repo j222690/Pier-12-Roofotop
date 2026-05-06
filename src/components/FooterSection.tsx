@@ -1,7 +1,31 @@
 import { Link } from "react-router-dom";
 import { MapPin, Phone, Instagram, Clock } from "lucide-react";
+import { useBusinessSettings } from "@/hooks/use-business-settings";
+
+const DAY_NAMES_SHORT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
 const FooterSection = () => {
+  const { settings } = useBusinessSettings();
+
+  // Build concise open-day labels from business hours
+  const openDays: string[] = [];
+  let i = 0;
+  while (i < 7) {
+    const h = settings.businessHours[i];
+    if (h) {
+      // Find consecutive days with same hours
+      let j = i + 1;
+      while (j < 7 && JSON.stringify(settings.businessHours[j]) === JSON.stringify(h)) j++;
+      const label = j - i === 1
+        ? DAY_NAMES_SHORT[i]
+        : `${DAY_NAMES_SHORT[i]} - ${DAY_NAMES_SHORT[j - 1]}`;
+      openDays.push(`${label}: ${h.open} às ${h.close}`);
+      i = j;
+    } else {
+      i++;
+    }
+  }
+
   return (
     <footer id="contato" className="py-16 px-4 border-t border-border bg-card/30">
       <div className="container mx-auto max-w-6xl">
@@ -16,14 +40,19 @@ const FooterSection = () => {
           <div>
             <h4 className="font-body text-sm tracking-widest text-primary uppercase mb-4">Horários</h4>
             <div className="space-y-2 font-body text-sm text-muted-foreground">
-              <div className="flex items-center gap-2">
-                <Clock size={14} className="text-primary/60" />
-                <span>Qua - Sáb: 18:00 às 23:00</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Clock size={14} className="text-primary/60" />
-                <span>Dom - Ter: Fechado</span>
-              </div>
+              {openDays.length > 0 ? (
+                openDays.map((label, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Clock size={14} className="text-primary/60" />
+                    <span>{label}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="flex items-center gap-2">
+                  <Clock size={14} className="text-primary/60" />
+                  <span>Consulte nossas redes</span>
+                </div>
+              )}
             </div>
           </div>
 
