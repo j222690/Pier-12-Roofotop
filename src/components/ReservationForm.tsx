@@ -41,6 +41,9 @@ interface DBClosure {
   reason: string;
 }
 
+// When prices are equal: group mode options
+type GroupMode = "all_female" | "all_male" | "mixed" | null;
+
 const ReservationForm = () => {
   const { settings } = useBusinessSettings();
   const [reservationName, setReservationName] = useState("");
@@ -55,6 +58,13 @@ const ReservationForm = () => {
   const [closures, setClosures] = useState<DBClosure[]>([]);
   const [capacityMap, setCapacityMap] = useState<Record<string, number>>({});
   const [capacityFull, setCapacityFull] = useState(false);
+
+  // Equal-price mode: group selection
+  const [groupMode, setGroupMode] = useState<GroupMode>(null);
+
+  // Different-price mode: separate male/female counters
+  const [maleCount, setMaleCount] = useState(1);
+  const [femaleCount, setFemaleCount] = useState(0);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -98,34 +108,62 @@ const ReservationForm = () => {
   const currentEvent = dayOfWeek !== undefined ? dbEvents.find((e) => e.day_of_week === dayOfWeek) : null;
   const timeSlots = dayOfWeek !== undefined ? getAvailableTimeSlots(dayOfWeek, settings.businessHours) : [];
 
-  // O evento tem opt-in (open wine) se has_opt_in === true
   const isOpenWineEvent = !!currentEvent?.has_opt_in;
-
-  // Preço do open wine: usa special_price do evento se definido, senão usa o das settings
   const openWineEventPrice = currentEvent?.special_price ?? settings.openWinePrice;
 
-  // Preço de entrada do dia: usa dailyPrices se definido para o dia, senão usa prices padrão
   const effectivePrices = (dayOfWeek !== undefined && settings.dailyPrices?.[dayOfWeek])
     ? settings.dailyPrices[dayOfWeek]!
     : settings.prices;
 
-  // Se o evento tem special_price mas NÃO é open wine (has_opt_in=false),
-  // usa o special_price como preço de entrada fixo (igual para homem e mulher)
   const eventFlatPrice = (currentEvent && !currentEvent.has_opt_in && currentEvent.special_price != null)
     ? currentEvent.special_price
     : null;
 
+  // Prices are equal when: open wine opt-in active, event flat price, or male === female price
+  const pricesAreEqual =
+    (isOpenWineEvent && openWineOptIn) ||
+    eventFlatPrice !== null ||
+    effectivePrices.male === effectivePrices.female;
+
+  // Build the guests array from the UI mode
+  const buildGuests = (): Guest[] => {
+    if (pricesAreEqual) {
+      // Equal price: build from groupMode + total count
+      const total = guests.length;
+      let genderList: ("male" | "female")[] = [];
+      if (groupMode === "all_male") genderList = Array(total).fill("male");
+      else if (groupMode === "all_female") genderList = Array(total).fill("female");
+      else {
+        // mixed: keep existing guest genders
+        genderList = guests.map((g) => g.gender as "male" | "female");
+      }
+      return genderList.map((gender, i) => ({
+        ...guests[i] ?? { id: Date.now() + i, ageCategory: "adult" as GuestAgeCategory },
+        gender,
+      }));
+    } else {
+      // Different prices: build from maleCount + femaleCount
+      const total = maleCount + femaleCount;
+      return Array.from({ length: total }, (_, i) => ({
+        id: i + 1,
+        gender: i < maleCount ? "male" : "female",
+        ageCategory: guests[i]?.ageCategory ?? "adult",
+        isBirthday: guests[i]?.isBirthday ?? false,
+      }));
+    }
+  };
+
+  const effectiveGuests = buildGuests();
+
   const calculateTotal = () => {
-    return guests.reduce((total, guest) => {
+    return effectiveGuests.reduce((total, guest) => {
       if (guest.isBirthday) return total;
       if (guest.ageCategory === "child_free") return total;
 
       let basePrice: number;
       if (isOpenWineEvent && openWineOptIn) {
-        // Open wine: mesmo preço para homem e mulher
         basePrice = openWineEventPrice;
       } else if (eventFlatPrice !== null) {
-        // Evento com preço especial fixo (sem opt-in)
         basePrice = eventFlatPrice;
       } else {
         basePrice = effectivePrices[guest.gender];
@@ -137,23 +175,35 @@ const ReservationForm = () => {
   };
 
   const total = calculateTotal();
-  const guestCount = guests.length;
+  const guestCount = effectiveGuests.length;
   const hasSparklingBonus = guestCount >= settings.sparklingBonusThreshold;
   const currentDateCapacity = date ? (capacityMap[format(date, "yyyy-MM-dd")] || 0) : 0;
   const remainingCapacity = settings.maxCapacity - currentDateCapacity;
 
-  const addGuest = () => {
-    if (guests.length >= settings.maxCapacity) return;
-    if (date && guests.length >= remainingCapacity) {
+  // Total people counter (used in both modes)
+  const totalPeople = pricesAreEqual ? guests.length : maleCount + femaleCount;
+
+  const addPerson = () => {
+    if (totalPeople >= remainingCapacity) {
       toast.error("Não há vagas suficientes para mais pessoas nesta data.");
       return;
     }
-    setGuests([...guests, { id: Date.now(), gender: "male", ageCategory: "adult" }]);
+    if (pricesAreEqual) {
+      setGuests([...guests, { id: Date.now(), gender: groupMode === "all_female" ? "female" : "male", ageCategory: "adult" }]);
+    } else {
+      setMaleCount((c) => c + 1);
+    }
   };
 
-  const removeGuest = () => {
-    if (guests.length <= 1) return;
-    setGuests(guests.slice(0, -1));
+  const removePerson = () => {
+    if (pricesAreEqual) {
+      if (guests.length <= 1) return;
+      setGuests(guests.slice(0, -1));
+    } else {
+      if (maleCount + femaleCount <= 1) return;
+      if (maleCount > 0) setMaleCount((c) => c - 1);
+      else setFemaleCount((c) => c - 1);
+    }
   };
 
   const updateGuest = (index: number, updates: Partial<Guest>) => {
@@ -162,20 +212,27 @@ const ReservationForm = () => {
     setGuests(updated);
   };
 
+  // In different-price mode, guest-level updates go through effectiveGuests mapping
+  const updateEffectiveGuest = (index: number, updates: Partial<Guest>) => {
+    const newGuests = [...guests];
+    while (newGuests.length <= index) newGuests.push({ id: Date.now() + index, gender: "male", ageCategory: "adult" });
+    newGuests[index] = { ...newGuests[index], ...updates };
+    setGuests(newGuests);
+  };
+
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const handleSubmit = async () => {
-    // Validação completa com feedback por campo
+    const finalGuests = buildGuests();
     const errors: Record<string, string> = {};
     if (!reservationName.trim()) errors.name = "Informe o nome da reserva";
     if (!phone.trim()) errors.phone = "Informe seu telefone / WhatsApp";
     if (!date) errors.date = "Selecione a data";
     if (date && !time) errors.time = "Selecione o horário";
-    if (guests.length === 0) errors.guests = "Adicione pelo menos um convidado";
+    if (finalGuests.length === 0) errors.guests = "Adicione pelo menos um convidado";
 
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
-      // Scroll suave até o primeiro campo com erro
       const firstErrorId = Object.keys(errors)[0];
       const el = document.getElementById(`field-${firstErrorId}`);
       if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -208,10 +265,10 @@ const ReservationForm = () => {
           },
           body: JSON.stringify({
             reservation_name: reservationName.trim(),
-            reservation_date: format(date, "yyyy-MM-dd"),
+            reservation_date: format(date!, "yyyy-MM-dd"),
             reservation_time: time,
-            guests: JSON.parse(JSON.stringify(guests)),
-            guest_count: guests.length,
+            guests: JSON.parse(JSON.stringify(finalGuests)),
+            guest_count: finalGuests.length,
             total_price: total,
             phone: phone.trim() || null,
             notes: notes.trim() || null,
@@ -227,7 +284,6 @@ const ReservationForm = () => {
         return;
       }
 
-      // Try to parse JSON — function may return HTML on 5xx
       let data: Record<string, unknown> = {};
       const contentType = response.headers.get("content-type") || "";
       if (contentType.includes("application/json")) {
@@ -271,12 +327,12 @@ const ReservationForm = () => {
     }
   };
 
-  const adultGuests = guests.filter((g) => g.ageCategory === "adult" && !g.isBirthday);
+  const adultGuests = effectiveGuests.filter((g) => g.ageCategory === "adult" && !g.isBirthday);
   const maleAdults = adultGuests.filter((g) => g.gender === "male").length;
   const femaleAdults = adultGuests.filter((g) => g.gender === "female").length;
-  const childFree = guests.filter((g) => g.ageCategory === "child_free").length;
-  const childHalf = guests.filter((g) => g.ageCategory === "child_half").length;
-  const birthdayCount = guests.filter((g) => g.isBirthday).length;
+  const childFree = effectiveGuests.filter((g) => g.ageCategory === "child_free").length;
+  const childHalf = effectiveGuests.filter((g) => g.ageCategory === "child_half").length;
+  const birthdayCount = effectiveGuests.filter((g) => g.isBirthday).length;
 
   return (
     <div className="space-y-8">
@@ -341,7 +397,7 @@ const ReservationForm = () => {
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-auto p-0 bg-card border-border" align="start">
-            <Calendar mode="single" selected={date} onSelect={(d) => { setDate(d); setTime(undefined); setOpenWineOptIn(false); setCapacityFull(false); if (fieldErrors.date) setFieldErrors((p) => ({ ...p, date: "" })); }} disabled={isDateDisabled} initialFocus className="p-3 pointer-events-auto" />
+            <Calendar mode="single" selected={date} onSelect={(d) => { setDate(d); setTime(undefined); setOpenWineOptIn(false); setCapacityFull(false); setGroupMode(null); if (fieldErrors.date) setFieldErrors((p) => ({ ...p, date: "" })); }} disabled={isDateDisabled} initialFocus className="p-3 pointer-events-auto" />
           </PopoverContent>
         </Popover>
         {fieldErrors.date && <p className="font-body text-xs text-destructive mt-1.5 flex items-center gap-1"><AlertCircle size={12} />{fieldErrors.date}</p>}
@@ -391,7 +447,6 @@ const ReservationForm = () => {
                 <p className="font-body text-xs text-primary mt-2">⏰ Início às {currentEvent.start_time}</p>
               )}
 
-              {/* Open Wine opt-in — aparece sempre que has_opt_in = true */}
               {isOpenWineEvent && (
                 <div className="mt-4 space-y-2">
                   <label className="font-body text-xs tracking-widest text-primary uppercase block">
@@ -428,15 +483,15 @@ const ReservationForm = () => {
         )}
       </AnimatePresence>
 
-      {/* Guests */}
+      {/* ============================================================ */}
+      {/* GUESTS SECTION                                               */}
+      {/* ============================================================ */}
       {!capacityFull && (
         <div id="field-guests">
-          <label className="font-body text-xs tracking-widest text-primary uppercase mb-3 block">Pessoas ({guests.length})</label>
-          <div className="flex items-center gap-4 mb-4">
-            <Button variant="outline" size="icon" onClick={removeGuest} disabled={guests.length <= 1} className="border-border"><Minus size={16} /></Button>
-            <div className="flex items-center gap-2"><Users size={18} className="text-primary" /><span className="font-body text-lg font-semibold text-foreground">{guests.length}</span></div>
-            <Button variant="outline" size="icon" onClick={addGuest} disabled={guests.length >= settings.maxCapacity} className="border-border"><Plus size={16} /></Button>
-          </div>
+          <label className="font-body text-xs tracking-widest text-primary uppercase mb-3 block">
+            Pessoas ({totalPeople})
+          </label>
+
           {fieldErrors.guests && <p className="font-body text-xs text-destructive mb-3 flex items-center gap-1"><AlertCircle size={12} />{fieldErrors.guests}</p>}
 
           {hasSparklingBonus && (
@@ -446,43 +501,134 @@ const ReservationForm = () => {
             </motion.div>
           )}
 
-          <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
-            {guests.map((guest, i) => (
-              <div key={guest.id} className="bg-secondary rounded-lg p-3 space-y-2">
-                <div className="flex items-center gap-3">
-                  <span className="font-body text-xs text-muted-foreground w-20">Pessoa {i + 1}</span>
-                  <div className="flex gap-2 flex-1">
-                    <button onClick={() => updateGuest(i, { gender: "male" })} className={cn("flex-1 py-2 rounded-md font-body text-xs transition-all", guest.gender === "male" ? "bg-primary/20 text-primary border border-primary/30" : "bg-muted text-muted-foreground border border-transparent")}>Homem</button>
-                    <button onClick={() => updateGuest(i, { gender: "female" })} className={cn("flex-1 py-2 rounded-md font-body text-xs transition-all", guest.gender === "female" ? "bg-primary/20 text-primary border border-primary/30" : "bg-muted text-muted-foreground border border-transparent")}>Mulher</button>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Select value={guest.ageCategory} onValueChange={(v) => updateGuest(i, { ageCategory: v as GuestAgeCategory })}>
-                    <SelectTrigger className="flex-1 h-8 text-xs bg-muted border-transparent font-body"><SelectValue /></SelectTrigger>
-                    <SelectContent className="bg-card border-border">
-                      <SelectItem value="adult" className="font-body text-xs">Adulto</SelectItem>
-                      <SelectItem value="child_free" className="font-body text-xs">Até 10 anos (cortesia)</SelectItem>
-                      <SelectItem value="child_half" className="font-body text-xs">10 a 12 anos (meia-entrada)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <button onClick={() => updateGuest(i, { isBirthday: !guest.isBirthday })} className={cn("flex items-center gap-1 px-3 py-1.5 rounded-md font-body text-xs transition-all", guest.isBirthday ? "bg-primary/20 text-primary border border-primary/30" : "bg-muted text-muted-foreground border border-transparent")}>
-                    <Gift size={12} /> Aniver.
-                  </button>
-                </div>
-                <div className="text-right font-body text-xs text-muted-foreground">
-                  {guest.isBirthday
-                    ? "🎂 Aniversariante — cortesia da casa!"
-                    : guest.ageCategory === "child_free"
-                    ? "Cortesia"
-                    : isOpenWineEvent && openWineOptIn
-                    ? formatCurrency(guest.ageCategory === "child_half" ? openWineEventPrice / 2 : openWineEventPrice)
-                    : eventFlatPrice !== null
-                    ? formatCurrency(guest.ageCategory === "child_half" ? eventFlatPrice / 2 : eventFlatPrice)
-                    : formatCurrency(getGuestPrice(guest, false, false, effectivePrices, settings.openWinePrice))}
+          {/* ── EQUAL PRICES MODE ── */}
+          {pricesAreEqual ? (
+            <div className="space-y-4">
+              {/* Total counter */}
+              <div className="flex items-center gap-4">
+                <Button variant="outline" size="icon" onClick={() => { if (guests.length > 1) setGuests(guests.slice(0, -1)); }} disabled={guests.length <= 1} className="border-border"><Minus size={16} /></Button>
+                <div className="flex items-center gap-2"><Users size={18} className="text-primary" /><span className="font-body text-lg font-semibold text-foreground">{guests.length}</span></div>
+                <Button variant="outline" size="icon" onClick={addPerson} disabled={guests.length >= remainingCapacity} className="border-border"><Plus size={16} /></Button>
+              </div>
+
+              {/* Group mode selector */}
+              <div>
+                <p className="font-body text-xs text-muted-foreground mb-2">Composição do grupo</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {(["all_female", "all_male", "mixed"] as GroupMode[]).map((mode) => (
+                    <button
+                      key={mode}
+                      onClick={() => {
+                        setGroupMode(mode);
+                        if (mode === "all_female") setGuests(guests.map((g) => ({ ...g, gender: "female" })));
+                        else if (mode === "all_male") setGuests(guests.map((g) => ({ ...g, gender: "male" })));
+                      }}
+                      className={cn(
+                        "py-2.5 rounded-lg font-body text-xs transition-all border",
+                        groupMode === mode
+                          ? "bg-primary/20 text-primary border-primary/30"
+                          : "bg-muted text-muted-foreground border-transparent"
+                      )}
+                    >
+                      {mode === "all_female" ? "👩 Todas mulheres" : mode === "all_male" ? "👨 Todos homens" : "👥 Misto"}
+                    </button>
+                  ))}
                 </div>
               </div>
-            ))}
-          </div>
+
+              {/* Aniversariantes per person (shown always) */}
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
+                {guests.map((guest, i) => (
+                  <div key={guest.id} className="bg-secondary rounded-lg p-3 flex items-center justify-between gap-3">
+                    <span className="font-body text-xs text-muted-foreground">Pessoa {i + 1}</span>
+
+                    {/* Age category */}
+                    <Select value={guest.ageCategory} onValueChange={(v) => updateGuest(i, { ageCategory: v as GuestAgeCategory })}>
+                      <SelectTrigger className="w-40 h-8 text-xs bg-muted border-transparent font-body"><SelectValue /></SelectTrigger>
+                      <SelectContent className="bg-card border-border">
+                        <SelectItem value="adult" className="font-body text-xs">Adulto</SelectItem>
+                        <SelectItem value="child_free" className="font-body text-xs">Até 10 anos (cortesia)</SelectItem>
+                        <SelectItem value="child_half" className="font-body text-xs">10 a 12 anos (meia)</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    {/* Birthday toggle */}
+                    <button
+                      onClick={() => updateGuest(i, { isBirthday: !guest.isBirthday })}
+                      className={cn(
+                        "flex items-center gap-1 px-3 py-1.5 rounded-md font-body text-xs transition-all whitespace-nowrap",
+                        guest.isBirthday ? "bg-primary/20 text-primary border border-primary/30" : "bg-muted text-muted-foreground border border-transparent"
+                      )}
+                    >
+                      <Gift size={12} /> Aniver.
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            /* ── DIFFERENT PRICES MODE ── */
+            <div className="space-y-4">
+              {/* Male counter */}
+              <div className="bg-secondary rounded-lg p-4">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-body text-sm text-foreground">👨 Homens</span>
+                  <span className="font-body text-sm font-semibold text-primary">{formatCurrency(effectivePrices.male)}/pessoa</span>
+                </div>
+                <div className="flex items-center gap-4 mt-2">
+                  <Button variant="outline" size="icon" onClick={() => setMaleCount((c) => Math.max(0, c - 1))} disabled={maleCount <= 0} className="border-border h-9 w-9"><Minus size={14} /></Button>
+                  <span className="font-body text-lg font-semibold text-foreground w-6 text-center">{maleCount}</span>
+                  <Button variant="outline" size="icon" onClick={() => { if (maleCount + femaleCount < remainingCapacity) setMaleCount((c) => c + 1); else toast.error("Não há vagas suficientes."); }} className="border-border h-9 w-9"><Plus size={14} /></Button>
+                </div>
+              </div>
+
+              {/* Female counter */}
+              <div className="bg-secondary rounded-lg p-4">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-body text-sm text-foreground">👩 Mulheres</span>
+                  <span className="font-body text-sm font-semibold text-primary">{formatCurrency(effectivePrices.female)}/pessoa</span>
+                </div>
+                <div className="flex items-center gap-4 mt-2">
+                  <Button variant="outline" size="icon" onClick={() => setFemaleCount((c) => Math.max(0, c - 1))} disabled={femaleCount <= 0} className="border-border h-9 w-9"><Minus size={14} /></Button>
+                  <span className="font-body text-lg font-semibold text-foreground w-6 text-center">{femaleCount}</span>
+                  <Button variant="outline" size="icon" onClick={() => { if (maleCount + femaleCount < remainingCapacity) setFemaleCount((c) => c + 1); else toast.error("Não há vagas suficientes."); }} className="border-border h-9 w-9"><Plus size={14} /></Button>
+                </div>
+              </div>
+
+              {/* Per-person age + birthday */}
+              {(maleCount + femaleCount) > 0 && (
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
+                  <p className="font-body text-xs text-muted-foreground">Tem crianças ou aniversariante?</p>
+                  {Array.from({ length: maleCount + femaleCount }, (_, i) => {
+                    const g = guests[i] ?? { id: i, ageCategory: "adult" as GuestAgeCategory, isBirthday: false };
+                    const genderLabel = i < maleCount ? "👨" : "👩";
+                    return (
+                      <div key={i} className="bg-secondary rounded-lg p-3 flex items-center justify-between gap-3">
+                        <span className="font-body text-xs text-muted-foreground">{genderLabel} Pessoa {i + 1}</span>
+                        <Select value={g.ageCategory} onValueChange={(v) => updateEffectiveGuest(i, { ageCategory: v as GuestAgeCategory })}>
+                          <SelectTrigger className="w-40 h-8 text-xs bg-muted border-transparent font-body"><SelectValue /></SelectTrigger>
+                          <SelectContent className="bg-card border-border">
+                            <SelectItem value="adult" className="font-body text-xs">Adulto</SelectItem>
+                            <SelectItem value="child_free" className="font-body text-xs">Até 10 anos (cortesia)</SelectItem>
+                            <SelectItem value="child_half" className="font-body text-xs">10 a 12 anos (meia)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <button
+                          onClick={() => updateEffectiveGuest(i, { isBirthday: !g.isBirthday })}
+                          className={cn(
+                            "flex items-center gap-1 px-3 py-1.5 rounded-md font-body text-xs transition-all whitespace-nowrap",
+                            g.isBirthday ? "bg-primary/20 text-primary border border-primary/30" : "bg-muted text-muted-foreground border border-transparent"
+                          )}
+                        >
+                          <Gift size={12} /> Aniver.
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -521,7 +667,6 @@ const ReservationForm = () => {
 
           {isOpenWineEvent && openWineOptIn ? (
             <>
-              {/* Open wine: todos pagam o mesmo preço */}
               {(maleAdults + femaleAdults) > 0 && (
                 <div className="flex justify-between font-body text-sm text-muted-foreground">
                   <span>{maleAdults + femaleAdults}x Adulto (Open Wine)</span>
@@ -531,11 +676,19 @@ const ReservationForm = () => {
             </>
           ) : eventFlatPrice !== null ? (
             <>
-              {/* Evento com preço especial fixo: mesmo valor para todos */}
               {(maleAdults + femaleAdults) > 0 && (
                 <div className="flex justify-between font-body text-sm text-muted-foreground">
                   <span>{maleAdults + femaleAdults}x Adulto ({currentEvent?.event_label})</span>
                   <span>{formatCurrency((maleAdults + femaleAdults) * eventFlatPrice)}</span>
+                </div>
+              )}
+            </>
+          ) : pricesAreEqual ? (
+            <>
+              {(maleAdults + femaleAdults) > 0 && (
+                <div className="flex justify-between font-body text-sm text-muted-foreground">
+                  <span>{maleAdults + femaleAdults}x Adulto</span>
+                  <span>{formatCurrency((maleAdults + femaleAdults) * effectivePrices.male)}</span>
                 </div>
               )}
             </>
@@ -598,7 +751,7 @@ const ReservationForm = () => {
         </div>
       )}
 
-      {/* Banner de campos faltando */}
+      {/* Validation errors banner */}
       {Object.values(fieldErrors).some(Boolean) && (
         <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-start gap-3">
           <AlertCircle size={18} className="text-destructive flex-shrink-0 mt-0.5" />
