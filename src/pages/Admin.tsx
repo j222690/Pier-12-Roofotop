@@ -273,12 +273,31 @@ const NovaReservaModal = ({ onClose, onSaved }: { onClose: () => void; onSaved: 
     open_wine_opt_in: false,
   });
   const [saving, setSaving] = useState(false);
+  const [dayEvent, setDayEvent] = useState<CustomEvent | null>(null);
 
   const guestCount = form.male_count + form.female_count;
+  const dow = new Date(form.reservation_date + "T12:00:00").getDay();
+  const prices = settings.dailyPrices?.[dow] ?? settings.prices;
+
+  // Busca o evento do dia selecionado dinamicamente
+  useEffect(() => {
+    const fetchDayEvent = async () => {
+      const { data } = await supabase
+        .from("custom_events")
+        .select("*")
+        .eq("day_of_week", dow)
+        .eq("is_active", true)
+        .limit(1)
+        .maybeSingle();
+      setDayEvent(data as CustomEvent | null);
+      // Se mudou o dia e não tem opt_in no novo evento, desmarca
+      if (!data?.has_opt_in) setForm(f => ({ ...f, open_wine_opt_in: false }));
+    };
+    fetchDayEvent();
+  }, [dow]);
 
   const calcTotal = () => {
-    const dow = new Date(form.reservation_date + "T12:00:00").getDay();
-    const prices = settings.dailyPrices?.[dow] ?? settings.prices;
+    if (form.open_wine_opt_in && dayEvent?.special_price) return guestCount * dayEvent.special_price;
     if (form.open_wine_opt_in) return guestCount * settings.openWinePrice;
     return form.male_count * prices.male + form.female_count * prices.female;
   };
@@ -307,9 +326,6 @@ const NovaReservaModal = ({ onClose, onSaved }: { onClose: () => void; onSaved: 
     onSaved();
     onClose();
   };
-
-  const dow = new Date(form.reservation_date + "T12:00:00").getDay();
-  const prices = settings.dailyPrices?.[dow] ?? settings.prices;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -367,13 +383,25 @@ const NovaReservaModal = ({ onClose, onSaved }: { onClose: () => void; onSaved: 
             <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="(49) 99999-9999" type="tel" className="h-10 bg-secondary border-border font-body" />
           </div>
 
-          <label className="flex items-center gap-3 cursor-pointer bg-secondary rounded-lg p-3">
-            <input type="checkbox" checked={form.open_wine_opt_in} onChange={(e) => setForm({ ...form, open_wine_opt_in: e.target.checked })} className="w-4 h-4 rounded" />
-            <div>
-              <p className="font-body text-sm text-foreground">🍷 Open Wine</p>
-              <p className="font-body text-xs text-muted-foreground">{formatCurrency(settings.openWinePrice)}/pessoa</p>
+          {dayEvent?.has_opt_in ? (
+            <label className="flex items-center gap-3 cursor-pointer bg-secondary rounded-lg p-3">
+              <input type="checkbox" checked={form.open_wine_opt_in} onChange={(e) => setForm({ ...form, open_wine_opt_in: e.target.checked })} className="w-4 h-4 rounded" />
+              <div>
+                <p className="font-body text-sm text-foreground">{dayEvent.opt_in_label || dayEvent.event_label || dayEvent.event_name}</p>
+                <p className="font-body text-xs text-muted-foreground">
+                  {formatCurrency(dayEvent.special_price ?? settings.openWinePrice)}/pessoa
+                </p>
+              </div>
+            </label>
+          ) : dayEvent ? (
+            <div className="bg-secondary rounded-lg p-3">
+              <p className="font-body text-xs text-muted-foreground uppercase tracking-wider mb-1">Evento do dia</p>
+              <p className="font-body text-sm text-foreground">{dayEvent.event_label || dayEvent.event_name}</p>
+              {dayEvent.start_time && (
+                <p className="font-body text-xs text-primary mt-0.5">A partir das {dayEvent.start_time}</p>
+              )}
             </div>
-          </label>
+          ) : null}
 
           <div>
             <label className="font-body text-xs text-muted-foreground mb-1 block">Observações</label>

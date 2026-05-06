@@ -14,7 +14,18 @@ export interface AdminSession {
 }
 
 export function useAdminAuth() {
-  const [session, setSession] = useState<AdminSession | null>(null);
+  // Carrega sessão do localStorage imediatamente (sem esperar rede)
+  const [session, setSession] = useState<AdminSession | null>(() => {
+    try {
+      const stored = localStorage.getItem(SESSION_KEY);
+      const meta = localStorage.getItem(SESSION_KEY + "_meta");
+      if (!stored || !meta) return null;
+      const { role, username } = JSON.parse(meta);
+      return { token: stored, role, username };
+    } catch {
+      return null;
+    }
+  });
   const [loading, setLoading] = useState(true);
 
   const verify = useCallback(async (token: string): Promise<AdminSession | null> => {
@@ -34,21 +45,31 @@ export function useAdminAuth() {
       }
       return null;
     } catch {
+      // Se falhar na rede, mantém a sessão local (offline-friendly)
       return null;
     }
   }, []);
 
-  // On mount, check stored token
+  // On mount, valida token em background sem bloquear a UI
   useEffect(() => {
     const stored = localStorage.getItem(SESSION_KEY);
     if (!stored) {
       setLoading(false);
       return;
     }
+    // Já temos a sessão carregada do localStorage — libera a UI imediatamente
+    setLoading(false);
+    // Valida em background: se inválido remove, se válido atualiza role/username
     verify(stored).then((sess) => {
-      setSession(sess);
-      if (!sess) localStorage.removeItem(SESSION_KEY);
-      setLoading(false);
+      if (!sess) {
+        localStorage.removeItem(SESSION_KEY);
+        localStorage.removeItem(SESSION_KEY + "_meta");
+        setSession(null);
+      } else {
+        // Atualiza metadados caso role tenha mudado
+        localStorage.setItem(SESSION_KEY + "_meta", JSON.stringify({ role: sess.role, username: sess.username }));
+        setSession(sess);
+      }
     });
   }, [verify]);
 
@@ -66,6 +87,7 @@ export function useAdminAuth() {
       if (!res.ok) return data.error || "Credenciais inválidas";
       const newSession: AdminSession = { token: data.token, role: data.role, username };
       localStorage.setItem(SESSION_KEY, data.token);
+      localStorage.setItem(SESSION_KEY + "_meta", JSON.stringify({ role: data.role, username }));
       setSession(newSession);
       return null;
     } catch {
@@ -75,6 +97,7 @@ export function useAdminAuth() {
 
   const logout = () => {
     localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(SESSION_KEY + "_meta");
     setSession(null);
   };
 

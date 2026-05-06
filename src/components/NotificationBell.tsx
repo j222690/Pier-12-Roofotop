@@ -118,7 +118,7 @@ export const NotificationBell = () => {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-11 w-80 max-h-[520px] bg-card border border-border rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+        <div className="absolute right-0 top-11 w-[calc(100vw-2rem)] max-w-sm max-h-[520px] bg-card border border-border rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
             <div className="flex items-center gap-2">
               <Bell size={14} className="text-primary" />

@@ -38,18 +38,28 @@ export function usePushSubscription(adminUsername: string | null) {
     }
     setLoading(true);
     try {
-      const reg = await navigator.serviceWorker.register("/sw.js");
+      // Registra (ou reutiliza) o service worker
+      const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
       await navigator.serviceWorker.ready;
+
       const perm = await Notification.requestPermission();
       setPermission(perm as PushPermission);
       if (perm !== "granted") {
         setLoading(false);
         return;
       }
-      const subscription = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-      });
+
+      // Verifica se já tem subscription válida
+      let subscription = await reg.pushManager.getSubscription();
+
+      // Se não tem ou a chave mudou, cria nova
+      if (!subscription) {
+        subscription = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        });
+      }
+
       const subJson = subscription.toJSON();
       const keys = subJson.keys as { p256dh: string; auth: string };
       await supabase.from("push_subscriptions").upsert(
