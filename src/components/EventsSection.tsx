@@ -1,5 +1,38 @@
 import { motion } from "framer-motion";
-import { UtensilsCrossed, Wine, Clock, Star } from "lucide-react";
+import { UtensilsCrossed, Wine, GlassWater, Sun, Fish, Sparkles, Star } from "lucide-react";
+
+const eventos = [
+  {
+    icon: GlassWater,
+    nome: "Open Drink",
+    descricao: "Drinks e coquetéis autorais à vontade. Uma noite de sabores e descontração no rooftop.",
+  },
+  {
+    icon: Wine,
+    nome: "Open Wine",
+    descricao: "Rótulos selecionados pelo sommelier para uma noite dedicada aos amantes de vinho.",
+  },
+  {
+    icon: UtensilsCrossed,
+    nome: "Open Food",
+    descricao: "O chef seleciona um prato especial do dia. Uma experiência gastronômica autoral e exclusiva.",
+  },
+  {
+    icon: Sun,
+    nome: "Sunset",
+    descricao: "Receba o fim do dia com trilha sonora especial e a vista mais bonita da cidade.",
+  },
+  {
+    icon: Fish,
+    nome: "Sushi à La Carte",
+    descricao: "Peças artesanais preparadas na hora, com ingredientes selecionados e apresentação impecável.",
+  },
+  {
+    icon: Sparkles,
+    nome: "E muito mais...",
+    descricao: "Nossos eventos mudam toda semana. Acompanhe nossas redes para não perder nenhuma novidade.",
+  },
+];
 
 const EventsSection = () => {
   return (
@@ -9,65 +42,47 @@ const EventsSection = () => {
           initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          className="text-center mb-16"
+          className="text-center mb-6"
         >
           <p className="font-body text-xs tracking-[0.4em] text-primary uppercase mb-4">Programação</p>
-          <h2 className="font-heading text-4xl md:text-5xl text-gradient-gold">Noites Especiais</h2>
+          <h2 className="font-heading text-4xl md:text-5xl text-gradient-gold">Eventos Toda Semana</h2>
         </motion.div>
 
-        <div className="grid md:grid-cols-2 gap-8 mb-12">
-          <motion.div
-            initial={{ opacity: 0, x: -30 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.6 }}
-            className="bg-card border border-border rounded-lg p-10 hover:border-primary/30 transition-colors duration-500"
-          >
-            <div className="flex items-center gap-4 mb-6">
-              <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
-                <UtensilsCrossed className="text-primary" size={24} />
-              </div>
-              <div>
-                <p className="font-body text-xs tracking-widest text-primary uppercase">Quarta-feira</p>
-                <h3 className="font-heading text-2xl text-foreground">Open Food</h3>
-              </div>
-            </div>
-            <p className="font-body text-muted-foreground leading-relaxed mb-4">
-              Toda quarta, o chef seleciona um prato especial do dia. Uma experiência gastronômica autoral e exclusiva.
-            </p>
-            <div className="flex items-center gap-2 text-primary/70">
-              <Clock size={14} />
-              <span className="font-body text-xs tracking-wider">A partir das 19:30</span>
-            </div>
-          </motion.div>
+        <motion.p
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ delay: 0.1 }}
+          className="font-body text-muted-foreground text-center max-w-xl mx-auto mb-16 leading-relaxed"
+        >
+          Toda semana tem algo especial no Pier 12. Confira alguns dos eventos que acontecem por aqui.
+        </motion.p>
 
-          <motion.div
-            initial={{ opacity: 0, x: 30 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.6 }}
-            className="bg-card border border-border rounded-lg p-10 hover:border-primary/30 transition-colors duration-500"
-          >
-            <div className="flex items-center gap-4 mb-6">
-              <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
-                <Wine className="text-primary" size={24} />
-              </div>
-              <div>
-                <p className="font-body text-xs tracking-widest text-primary uppercase">Quinta-feira</p>
-                <h3 className="font-heading text-2xl text-foreground">Open Wine</h3>
-              </div>
-            </div>
-            <p className="font-body text-muted-foreground leading-relaxed mb-4">
-              Toda quinta, rótulos selecionados pelo sommelier para uma noite dedicada aos amantes de vinho.
-            </p>
-            <div className="flex items-center gap-2 text-primary/70">
-              <Clock size={14} />
-              <span className="font-body text-xs tracking-wider">A partir das 18:00</span>
-            </div>
-          </motion.div>
+        <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-6 mb-12">
+          {eventos.map((evento, i) => {
+            const Icon = evento.icon;
+            return (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, y: 30 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.5, delay: i * 0.08 }}
+                className="bg-card border border-border rounded-lg p-7 hover:border-primary/40 transition-colors duration-500 flex flex-col gap-4"
+              >
+                <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Icon className="text-primary" size={20} />
+                </div>
+                <div>
+                  <h3 className="font-heading text-xl text-foreground mb-2">{evento.nome}</h3>
+                  <p className="font-body text-sm text-muted-foreground leading-relaxed">{evento.descricao}</p>
+                </div>
+              </motion.div>
+            );
+          })}
         </div>
 
-        {/* Rules */}
+        {/* Informações & Benefícios */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
