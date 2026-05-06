@@ -83,6 +83,21 @@ Deno.serve(async (req) => {
       })
     }
 
+    // Compress guests array to fit Stripe's 500-char metadata limit
+    // Format: "id+X,id+X" where X is a single char encoding gender+ageCategory
+    // Encoding: A=female/adult, B=female/child, C=male/adult, D=male/child, E=female/birthday, F=male/birthday
+    function compressGuests(guestList: Array<{ id: number | string; gender: string; ageCategory: string; isBirthday?: boolean }>): string {
+      const codeMap: Record<string, string> = {
+        fa: 'A', fc: 'B', ma: 'C', mc: 'D', fb: 'E', mb: 'F',
+      }
+      return guestList.map(g => {
+        const gChar = g.gender === 'male' ? 'm' : 'f'
+        const aChar = g.isBirthday ? 'b' : (g.ageCategory === 'adult' ? 'a' : 'c')
+        const code = codeMap[gChar + aChar] || 'A'
+        return `${g.id}${code}`
+      }).join(',')
+    }
+
     const stripeKey = Deno.env.get('STRIPE_SECRET_KEY')
     if (!stripeKey) throw new Error('STRIPE_SECRET_KEY not configured')
 
@@ -114,7 +129,7 @@ Deno.serve(async (req) => {
         total_price: String(total_price),
         phone: phone || '',
         open_wine_opt_in: String(open_wine_opt_in),
-        guests: JSON.stringify(guests),
+        guests: compressGuests(guests ?? []),
         notes: notes || '',
       },
     })

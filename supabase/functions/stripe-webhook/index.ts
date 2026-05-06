@@ -36,8 +36,27 @@ Deno.serve(async (req) => {
       const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
       const supabase = createClient(supabaseUrl, supabaseKey)
 
+      // Decompress guests from compact format: "idX,idX"
+      // X encoding: A=female/adult, B=female/child, C=male/adult, D=male/child, E=female/birthday, F=male/birthday
+      function decompressGuests(compressed: string): Array<{ id: string; gender: string; ageCategory: string; isBirthday?: boolean }> {
+        if (!compressed) return []
+        const decodeMap: Record<string, { gender: string; ageCategory: string; isBirthday?: boolean }> = {
+          A: { gender: 'female', ageCategory: 'adult' },
+          B: { gender: 'female', ageCategory: 'child' },
+          C: { gender: 'male',   ageCategory: 'adult' },
+          D: { gender: 'male',   ageCategory: 'child' },
+          E: { gender: 'female', ageCategory: 'adult', isBirthday: true },
+          F: { gender: 'male',   ageCategory: 'adult', isBirthday: true },
+        }
+        return compressed.split(',').map(entry => {
+          const code = entry.slice(-1)
+          const id = entry.slice(0, -1)
+          return { id, ...(decodeMap[code] || { gender: 'female', ageCategory: 'adult' }) }
+        })
+      }
+
       let guests
-      try { guests = JSON.parse(meta.guests || '[]') } catch { guests = [] }
+      try { guests = decompressGuests(meta.guests || '') } catch { guests = [] }
 
       // Cria a reserva e pega o ID gerado
       const { data: reservation, error: insertError } = await supabase
